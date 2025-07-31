@@ -2,55 +2,54 @@
 
 import { useEffect, useState } from "react"
 import { useUser } from "@clerk/nextjs"
-import { MobileNav } from "@/components/mobile-nav"
 import { StoryRing } from "@/components/story-ring"
 import { PostCard } from "@/components/post-card"
-import { supabase } from "@/lib/supabase"
-import type { Post, Story } from "@/lib/types"
+import { postsApi, storiesApi, userApi } from "@/lib/api"
+import type { Post, Story, User } from "@/lib/types"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Camera, Heart } from "lucide-react"
 import Link from "next/link"
 
 export default function HomePage() {
   const { user: clerkUser } = useUser()
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [posts, setPosts] = useState<Post[]>([])
   const [stories, setStories] = useState<Story[]>([])
   const [loading, setLoading] = useState(true)
+  const [page, setPage] = useState(0)
+  const [hasMore, setHasMore] = useState(true)
 
   useEffect(() => {
     if (clerkUser) {
+      initializeUser()
       fetchFeedData()
     }
   }, [clerkUser])
 
-  const fetchFeedData = async () => {
+  const initializeUser = async () => {
+    if (!clerkUser) return
+
+    const user = await userApi.getCurrentUser(clerkUser.id)
+    setCurrentUser(user)
+  }
+
+  const fetchFeedData = async (pageNum = 0) => {
+    if (!currentUser) return
+
     try {
-      // Fetch posts with user data
-      const { data: postsData, error: postsError } = await supabase
-        .from("posts")
-        .select(`
-          *,
-          user:users(*)
-        `)
-        .order("created_at", { ascending: false })
-        .limit(20)
+      const [postsData, storiesData] = await Promise.all([
+        postsApi.getFeedPosts(currentUser.id, pageNum),
+        pageNum === 0 ? storiesApi.getActiveStories() : [],
+      ])
 
-      if (postsError) throw postsError
+      if (pageNum === 0) {
+        setPosts(postsData)
+        setStories(storiesData)
+      } else {
+        setPosts((prev) => [...prev, ...postsData])
+      }
 
-      // Fetch stories that haven't expired
-      const { data: storiesData, error: storiesError } = await supabase
-        .from("stories")
-        .select(`
-          *,
-          user:users(*)
-        `)
-        .gt("expires_at", new Date().toISOString())
-        .order("created_at", { ascending: false })
-
-      if (storiesError) throw storiesError
-
-      setPosts(postsData || [])
-      setStories(storiesData || [])
+      setHasMore(postsData.length === 10)
     } catch (error) {
       console.error("Error fetching feed data:", error)
     } finally {
@@ -59,38 +58,69 @@ export default function HomePage() {
   }
 
   const handleLike = async (postId: string) => {
-    // Implementation for liking posts
-    console.log("Like post:", postId)
+    if (!currentUser) return
+
+    const post = posts.find((p) => p.id === postId)
+    if (!post) return
+
+    const isLiked = post.is_liked
+
+    // Optimistic update
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === postId
+          ? {
+              ...p,
+              is_liked: !isLiked,
+              likes_count: isLiked ? p.likes_count - 1 : p.likes_count + 1,
+            }
+          : p,
+      ),
+    )
+
+    // API call
+    if (isLiked) {
+      await postsApi.unlikePost(currentUser.id, postId)
+    } else {
+      await postsApi.likePost(currentUser.id, postId)
+    }
   }
 
   const handleComment = (postId: string) => {
-    // Navigate to post detail page
+    // Navigate to post detail page or open comment modal
     console.log("Comment on post:", postId)
   }
 
-  if (loading) {
+  const loadMore = () => {
+    if (hasMore && !loading) {
+      const nextPage = page + 1
+      setPage(nextPage)
+      fetchFeedData(nextPage)
+    }
+  }
+
+  if (loading && posts.length === 0) {
     return (
-      <div className="min-h-screen bg-white">
+      <div className="max-w-2xl mx-auto">
         <div className="animate-pulse">
           <div className="h-12 bg-gray-200 mb-4"></div>
           <div className="h-20 bg-gray-200 mb-4"></div>
           <div className="h-96 bg-gray-200 mb-4"></div>
         </div>
-        <MobileNav />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-white pb-12 md:pb-0">
-      {/* Header */}
-      <header className="sticky top-0 bg-white border-b border-gray-200 z-40">
+    <div className="max-w-2xl mx-auto">
+      {/* Mobile Header */}
+      <header className="sticky top-0 bg-white border-b border-gray-200 z-40 lg:hidden">
         <div className="flex items-center justify-between px-4 py-3">
           <Link href="/" className="text-2xl font-bold instagram-gradient bg-clip-text text-transparent">
             Instagram
           </Link>
           <div className="flex items-center space-x-4">
-            <Link href="/messages">
+            <Link href="/notifications">
               <Heart className="h-6 w-6" />
             </Link>
             <Link href="/messages">
@@ -126,7 +156,7 @@ export default function HomePage() {
       </div>
 
       {/* Feed */}
-      <main className="max-w-md mx-auto">
+      <main>
         {posts.length === 0 ? (
           <div className="text-center py-12">
             <div className="text-gray-500 mb-4">No posts yet</div>
@@ -135,11 +165,21 @@ export default function HomePage() {
             </Link>
           </div>
         ) : (
-          posts.map((post) => <PostCard key={post.id} post={post} onLike={handleLike} onComment={handleComment} />)
+          <>
+            {posts.map((post) => (
+              <PostCard key={post.id} post={post} onLike={handleLike} onComment={handleComment} />
+            ))}
+
+            {hasMore && (
+              <div className="text-center py-4">
+                <button onClick={loadMore} className="text-blue-500 font-semibold" disabled={loading}>
+                  {loading ? "Loading..." : "Load more"}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </main>
-
-      <MobileNav />
     </div>
   )
 }

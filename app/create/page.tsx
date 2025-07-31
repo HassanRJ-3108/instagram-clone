@@ -1,56 +1,95 @@
 "use client"
 
-import type React from "react"
-
 import { useState } from "react"
 import { useUser } from "@clerk/nextjs"
-import { ArrowLeft, ImageIcon, Camera } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { ArrowLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { MobileNav } from "@/components/mobile-nav"
+import { ImageUpload } from "@/components/image-upload"
+import { postsApi, userApi } from "@/lib/api"
+import { supabase } from "@/lib/supabase"
 import Link from "next/link"
-import Image from "next/image"
-import { useRouter } from "next/navigation"
+import { toast } from "sonner"
 
 export default function CreatePage() {
   const { user } = useUser()
   const router = useRouter()
-  const [selectedImage, setSelectedImage] = useState<string | null>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [preview, setPreview] = useState<string>("")
   const [caption, setCaption] = useState("")
   const [isPosting, setIsPosting] = useState(false)
 
-  const handleImageSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onload = (e) => {
-        setSelectedImage(e.target?.result as string)
+  const handleImageSelect = (file: File, previewUrl: string) => {
+    setSelectedFile(file)
+    setPreview(previewUrl)
+  }
+
+  const handleRemoveImage = () => {
+    setSelectedFile(null)
+    setPreview("")
+  }
+
+  const uploadImage = async (file: File): Promise<string | null> => {
+    try {
+      const fileExt = file.name.split(".").pop()
+      const fileName = `${Date.now()}-${Math.random()}.${fileExt}`
+      const filePath = `posts/${fileName}`
+
+      const { error: uploadError } = await supabase.storage.from("images").upload(filePath, file)
+
+      if (uploadError) {
+        console.error("Upload error:", uploadError)
+        return null
       }
-      reader.readAsDataURL(file)
+
+      const { data } = supabase.storage.from("images").getPublicUrl(filePath)
+
+      return data.publicUrl
+    } catch (error) {
+      console.error("Error uploading image:", error)
+      return null
     }
   }
 
   const handlePost = async () => {
-    if (!selectedImage) return
+    if (!selectedFile || !user) return
 
     setIsPosting(true)
     try {
-      // Here you would upload the image and create the post
-      // For now, we'll just simulate the process
-      await new Promise((resolve) => setTimeout(resolve, 2000))
+      // Get current user from database
+      const currentUser = await userApi.getCurrentUser(user.id)
+      if (!currentUser) {
+        toast.error("User not found")
+        return
+      }
 
-      // Navigate back to home after posting
-      router.push("/")
+      // Upload image
+      const imageUrl = await uploadImage(selectedFile)
+      if (!imageUrl) {
+        toast.error("Failed to upload image")
+        return
+      }
+
+      // Create post
+      const post = await postsApi.createPost(currentUser.id, imageUrl, caption)
+      if (post) {
+        toast.success("Post created successfully!")
+        router.push("/")
+      } else {
+        toast.error("Failed to create post")
+      }
     } catch (error) {
       console.error("Error creating post:", error)
+      toast.error("Something went wrong")
     } finally {
       setIsPosting(false)
     }
   }
 
   return (
-    <div className="min-h-screen bg-white pb-12 md:pb-0">
+    <div className="max-w-2xl mx-auto min-h-screen bg-white">
       {/* Header */}
       <header className="sticky top-0 bg-white border-b border-gray-200 z-40">
         <div className="flex items-center justify-between px-4 py-3">
@@ -64,7 +103,7 @@ export default function CreatePage() {
           </div>
           <Button
             onClick={handlePost}
-            disabled={!selectedImage || isPosting}
+            disabled={!selectedFile || isPosting}
             className="bg-blue-500 hover:bg-blue-600 text-white px-6"
           >
             {isPosting ? "Posting..." : "Share"}
@@ -72,36 +111,27 @@ export default function CreatePage() {
         </div>
       </header>
 
-      <main className="max-w-md mx-auto">
-        {!selectedImage ? (
-          <div className="flex flex-col items-center justify-center min-h-[60vh] p-8">
-            <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-6">
-              <ImageIcon className="h-12 w-12 text-gray-400" />
-            </div>
-            <h2 className="text-xl font-semibold mb-2">Share a photo</h2>
-            <p className="text-gray-500 text-center mb-8">When you share photos, they'll appear on your profile.</p>
+      <main className="p-4">
+        {!preview ? (
+          <div className="flex flex-col items-center justify-center min-h-[60vh]">
+            <div className="w-full max-w-md">
+              <div className="text-center mb-8">
+                <h2 className="text-xl font-semibold mb-2">Share a photo</h2>
+                <p className="text-gray-500">When you share photos, they'll appear on your profile.</p>
+              </div>
 
-            <div className="space-y-4 w-full max-w-xs">
-              <label className="block">
-                <input type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
-                <Button className="w-full bg-blue-500 hover:bg-blue-600 text-white">
-                  <ImageIcon className="h-4 w-4 mr-2" />
-                  Select from gallery
-                </Button>
-              </label>
-
-              <Button variant="outline" className="w-full bg-transparent">
-                <Camera className="h-4 w-4 mr-2" />
-                Take photo
-              </Button>
+              <ImageUpload onImageSelect={handleImageSelect} className="w-full" />
             </div>
           </div>
         ) : (
-          <div className="p-4">
+          <div className="space-y-6">
             {/* Preview */}
-            <div className="relative aspect-square mb-4 rounded-lg overflow-hidden">
-              <Image src={selectedImage || "/placeholder.svg"} alt="Selected image" fill className="object-cover" />
-            </div>
+            <ImageUpload
+              preview={preview}
+              onRemove={handleRemoveImage}
+              onImageSelect={handleImageSelect}
+              className="w-full"
+            />
 
             {/* User info and caption */}
             <div className="flex items-start space-x-3">
@@ -116,14 +146,14 @@ export default function CreatePage() {
                   placeholder="Write a caption..."
                   value={caption}
                   onChange={(e) => setCaption(e.target.value)}
-                  className="border-none p-0 resize-none focus-visible:ring-0 text-sm"
+                  className="border-none p-0 resize-none focus-visible:ring-0 text-sm min-h-[100px]"
                   rows={4}
                 />
               </div>
             </div>
 
             {/* Additional options */}
-            <div className="mt-6 space-y-4">
+            <div className="space-y-4">
               <div className="flex items-center justify-between py-3 border-t border-gray-200">
                 <span className="text-sm">Add location</span>
                 <Button variant="ghost" size="sm" className="text-blue-500">
@@ -148,8 +178,6 @@ export default function CreatePage() {
           </div>
         )}
       </main>
-
-      <MobileNav />
     </div>
   )
 }

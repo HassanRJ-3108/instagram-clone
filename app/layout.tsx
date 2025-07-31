@@ -1,14 +1,14 @@
 import type React from "react"
 import { ClerkProvider } from "@clerk/nextjs"
 import { Inter } from "next/font/google"
+import { ResponsiveLayout } from "@/components/responsive-layout"
 import "./globals.css"
 
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata = {
-  title: "Instagram Clone",
-  description: "A comprehensive Instagram clone built with Next.js",
-    generator: 'v0.dev'
+  title: "Instagram Clone - Full Featured Social Media App",
+  description: "A comprehensive Instagram clone with real-time messaging, stories, reels, and more",
 }
 
 export default function RootLayout({
@@ -19,7 +19,9 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en">
-        <body className={inter.className}>{children}</body>
+        <body className={inter.className}>
+          <ResponsiveLayout>{children}</ResponsiveLayout>
+        </body>
       </html>
     </ClerkProvider>
   )
