@@ -7,6 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { User } from "@/lib/types"
+import { supabase } from "@/lib/supabase"
 
 interface Reel {
   id: string
@@ -52,37 +53,29 @@ export default function ReelsPage() {
 
   const fetchReels = async () => {
     try {
-      // Mock reels data - replace with actual API call
-      const mockReels: Reel[] = Array.from({ length: 10 }, (_, i) => ({
-        id: `reel-${i + 1}`,
-        user_id: `user-${i + 1}`,
-        video_url: `/placeholder-video.mp4`,
-        caption: `Amazing reel #${i + 1} 🔥`,
-        likes_count: Math.floor(Math.random() * 10000),
-        comments_count: Math.floor(Math.random() * 1000),
-        views_count: Math.floor(Math.random() * 100000),
-        created_at: new Date(Date.now() - i * 86400000).toISOString(),
-        user: {
-          id: `user-${i + 1}`,
-          clerk_id: `clerk-${i + 1}`,
-          username: `user${i + 1}`,
-          email: `user${i + 1}@example.com`,
-          full_name: `User ${i + 1}`,
-          avatar_url: `/placeholder.svg?height=40&width=40&text=U${i + 1}`,
-          is_verified: Math.random() > 0.7,
-          is_private: false,
-          followers_count: Math.floor(Math.random() * 10000),
-          following_count: Math.floor(Math.random() * 1000),
-          posts_count: Math.floor(Math.random() * 100),
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        is_liked: Math.random() > 0.5,
+      // Fetch actual reels from database
+      const { data, error } = await supabase
+        .from("reels")
+        .select(`
+        *,
+        user:users(*),
+        is_liked:reel_likes!inner(user_id)
+      `)
+        .order("created_at", { ascending: false })
+        .limit(10)
+
+      if (error) throw error
+
+      const reelsWithLikeStatus = (data || []).map((reel) => ({
+        ...reel,
+        is_liked: reel.is_liked?.some((like: any) => like.user_id === user?.id) || false,
       }))
 
-      setReels(mockReels)
+      setReels(reelsWithLikeStatus)
     } catch (error) {
       console.error("Error fetching reels:", error)
+      // If no reels, show empty state
+      setReels([])
     } finally {
       setLoading(false)
     }
@@ -132,124 +125,147 @@ export default function ReelsPage() {
   }
 
   return (
-    <div className="h-screen bg-black overflow-hidden">
-      <div
-        ref={containerRef}
-        className="h-full overflow-y-scroll snap-y snap-mandatory hide-scrollbar"
-        onScroll={handleScroll}
-      >
-        {reels.map((reel, index) => (
-          <div key={reel.id} className="h-screen w-full relative snap-start flex items-center justify-center">
-            {/* Video */}
-            <video
-              ref={(el) => { videoRefs.current[index] = el; }}
-              src={reel.video_url}
-              className="h-full w-full object-cover"
-              loop
-              playsInline
-              muted={isMuted}
-              onClick={togglePlayPause}
-            />
+    <div className="h-screen bg-black overflow-hidden flex">
+      {/* Reels Container - Proper aspect ratio for desktop */}
+      <div className="flex-1 flex items-center justify-center">
+        <div
+          className={cn(
+            "relative bg-black overflow-hidden",
+            "max-w-sm mx-auto", // Mobile: full width, Desktop: Instagram reel width
+            "lg:max-w-sm lg:aspect-[9/16]", // Desktop: 9:16 aspect ratio
+            "h-screen lg:h-[80vh]", // Mobile: full height, Desktop: 80% height
+          )}
+        >
+          {reels.length === 0 ? (
+            <div className="h-full flex items-center justify-center text-white">
+              <div className="text-center">
+                <div className="text-xl mb-4">No reels yet</div>
+                <p className="text-gray-400">Be the first to create a reel!</p>
+              </div>
+            </div>
+          ) : (
+            <div
+              ref={containerRef}
+              className="h-full overflow-y-scroll snap-y snap-mandatory hide-scrollbar"
+              onScroll={handleScroll}
+            >
+              {reels.map((reel, index) => (
+                <div key={reel.id} className="h-screen w-full relative snap-start flex items-center justify-center">
+                  {/* Video */}
+                  <video
+                    ref={(el) => { videoRefs.current[index] = el; }}
+                    src={reel.video_url}
+                    className="h-full w-full object-cover"
+                    loop
+                    playsInline
+                    muted={isMuted}
+                    onClick={togglePlayPause}
+                  />
 
-            {/* Overlay Controls */}
-            <div className="absolute inset-0 flex">
-              {/* Left side - tap to play/pause */}
-              <div className="flex-1" onClick={togglePlayPause} />
+                  {/* Overlay Controls */}
+                  <div className="absolute inset-0 flex">
+                    {/* Left side - tap to play/pause */}
+                    <div className="flex-1" onClick={togglePlayPause} />
 
-              {/* Right side - actions */}
-              <div className="w-16 flex flex-col justify-end items-center pb-20 space-y-6">
-                {/* User Avatar */}
-                <div className="relative">
-                  <Avatar className="h-12 w-12 border-2 border-white">
-                    <AvatarImage src={reel.user?.avatar_url || "/placeholder.svg"} />
-                    <AvatarFallback>{reel.user?.username?.[0]?.toUpperCase()}</AvatarFallback>
-                  </Avatar>
-                  <Button
-                    size="icon"
-                    className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 h-6 w-6 rounded-full bg-red-500 hover:bg-red-600 text-white"
-                  >
-                    +
-                  </Button>
-                </div>
+                    {/* Right side - actions */}
+                    <div className="w-16 flex flex-col justify-end items-center pb-20 space-y-6">
+                      {/* User Avatar */}
+                      <div className="relative">
+                        <Avatar className="h-12 w-12 border-2 border-white">
+                          <AvatarImage src={reel.user?.avatar_url || "/placeholder.svg"} />
+                          <AvatarFallback>{reel.user?.username?.[0]?.toUpperCase()}</AvatarFallback>
+                        </Avatar>
+                        <Button
+                          size="icon"
+                          className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 h-6 w-6 rounded-full bg-red-500 hover:bg-red-600 text-white"
+                        >
+                          +
+                        </Button>
+                      </div>
 
-                {/* Like */}
-                <div className="flex flex-col items-center">
+                      {/* Like */}
+                      <div className="flex flex-col items-center">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-white hover:bg-white/20 h-12 w-12"
+                          onClick={() => handleLike(reel.id)}
+                        >
+                          <Heart className={cn("h-7 w-7", reel.is_liked && "fill-red-500 text-red-500")} />
+                        </Button>
+                        <span className="text-white text-xs font-semibold">
+                          {reel.likes_count > 999 ? `${(reel.likes_count / 1000).toFixed(1)}K` : reel.likes_count}
+                        </span>
+                      </div>
+
+                      {/* Comment */}
+                      <div className="flex flex-col items-center">
+                        <Button variant="ghost" size="icon" className="text-white hover:bg-white/20 h-12 w-12">
+                          <MessageCircle className="h-7 w-7" />
+                        </Button>
+                        <span className="text-white text-xs font-semibold">
+                          {reel.comments_count > 999
+                            ? `${(reel.comments_count / 1000).toFixed(1)}K`
+                            : reel.comments_count}
+                        </span>
+                      </div>
+
+                      {/* Share */}
+                      <Button variant="ghost" size="icon" className="text-white hover:bg-white/20 h-12 w-12">
+                        <Send className="h-7 w-7" />
+                      </Button>
+
+                      {/* Save */}
+                      <Button variant="ghost" size="icon" className="text-white hover:bg-white/20 h-12 w-12">
+                        <Bookmark className="h-7 w-7" />
+                      </Button>
+
+                      {/* More */}
+                      <Button variant="ghost" size="icon" className="text-white hover:bg-white/20 h-12 w-12">
+                        <MoreHorizontal className="h-7 w-7" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Bottom Info */}
+                  <div className="absolute bottom-0 left-0 right-16 p-4 text-white">
+                    <div className="flex items-center space-x-2 mb-2">
+                      <span className="font-semibold">@{reel.user?.username}</span>
+                      {reel.user?.is_verified && (
+                        <div className="w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center">
+                          <span className="text-white text-xs">✓</span>
+                        </div>
+                      )}
+                    </div>
+                    {reel.caption && <p className="text-sm mb-2">{reel.caption}</p>}
+                    <div className="text-xs text-gray-300">
+                      {reel.views_count > 999 ? `${(reel.views_count / 1000).toFixed(1)}K` : reel.views_count} views
+                    </div>
+                  </div>
+
+                  {/* Play/Pause indicator */}
+                  {!isPlaying && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="bg-black/50 rounded-full p-4">
+                        <Play className="h-12 w-12 text-white fill-current" />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Mute/Unmute button */}
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="text-white hover:bg-white/20 h-12 w-12"
-                    onClick={() => handleLike(reel.id)}
+                    className="absolute top-4 right-4 text-white hover:bg-white/20"
+                    onClick={toggleMute}
                   >
-                    <Heart className={cn("h-7 w-7", reel.is_liked && "fill-red-500 text-red-500")} />
+                    {isMuted ? <VolumeX className="h-6 w-6" /> : <Volume2 className="h-6 w-6" />}
                   </Button>
-                  <span className="text-white text-xs font-semibold">
-                    {reel.likes_count > 999 ? `${(reel.likes_count / 1000).toFixed(1)}K` : reel.likes_count}
-                  </span>
                 </div>
-
-                {/* Comment */}
-                <div className="flex flex-col items-center">
-                  <Button variant="ghost" size="icon" className="text-white hover:bg-white/20 h-12 w-12">
-                    <MessageCircle className="h-7 w-7" />
-                  </Button>
-                  <span className="text-white text-xs font-semibold">
-                    {reel.comments_count > 999 ? `${(reel.comments_count / 1000).toFixed(1)}K` : reel.comments_count}
-                  </span>
-                </div>
-
-                {/* Share */}
-                <Button variant="ghost" size="icon" className="text-white hover:bg-white/20 h-12 w-12">
-                  <Send className="h-7 w-7" />
-                </Button>
-
-                {/* Save */}
-                <Button variant="ghost" size="icon" className="text-white hover:bg-white/20 h-12 w-12">
-                  <Bookmark className="h-7 w-7" />
-                </Button>
-
-                {/* More */}
-                <Button variant="ghost" size="icon" className="text-white hover:bg-white/20 h-12 w-12">
-                  <MoreHorizontal className="h-7 w-7" />
-                </Button>
-              </div>
+              ))}
             </div>
-
-            {/* Bottom Info */}
-            <div className="absolute bottom-0 left-0 right-16 p-4 text-white">
-              <div className="flex items-center space-x-2 mb-2">
-                <span className="font-semibold">@{reel.user?.username}</span>
-                {reel.user?.is_verified && (
-                  <div className="w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center">
-                    <span className="text-white text-xs">✓</span>
-                  </div>
-                )}
-              </div>
-              {reel.caption && <p className="text-sm mb-2">{reel.caption}</p>}
-              <div className="text-xs text-gray-300">
-                {reel.views_count > 999 ? `${(reel.views_count / 1000).toFixed(1)}K` : reel.views_count} views
-              </div>
-            </div>
-
-            {/* Play/Pause indicator */}
-            {!isPlaying && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="bg-black/50 rounded-full p-4">
-                  <Play className="h-12 w-12 text-white fill-current" />
-                </div>
-              </div>
-            )}
-
-            {/* Mute/Unmute button */}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute top-4 right-4 text-white hover:bg-white/20"
-              onClick={toggleMute}
-            >
-              {isMuted ? <VolumeX className="h-6 w-6" /> : <Volume2 className="h-6 w-6" />}
-            </Button>
-          </div>
-        ))}
+          )}
+        </div>
       </div>
     </div>
   )

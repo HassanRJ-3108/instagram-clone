@@ -6,11 +6,14 @@ import { Button } from "@/components/ui/button"
 import { MobileNav } from "@/components/mobile-nav"
 import { Heart, MessageCircle, UserPlus } from "lucide-react"
 import Link from "next/link"
+import { supabase } from "@/lib/supabase"
+import { userApi } from "@/lib/api/user-api"
+import { useUser } from "@clerk/nextjs"
 
 interface Notification {
   id: string
   type: "like" | "comment" | "follow" | "mention"
-  user: {
+  from_user: {
     username: string
     avatar_url?: string
     is_verified: boolean
@@ -20,90 +23,58 @@ interface Notification {
     image_url: string
   }
   message: string
-  time: string
+  created_at: string
   is_read: boolean
 }
 
 export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [loading, setLoading] = useState(true)
+  const { user } = useUser()
 
   useEffect(() => {
     fetchNotifications()
-  }, [])
+  }, [user])
 
   const fetchNotifications = async () => {
-    try {
-      // Mock notifications data
-      const mockNotifications: Notification[] = [
-        {
-          id: "1",
-          type: "like",
-          user: {
-            username: "john_doe",
-            avatar_url: "/placeholder.svg?height=40&width=40&text=JD",
-            is_verified: false,
-          },
-          post: {
-            id: "post-1",
-            image_url: "/placeholder.svg?height=100&width=100&text=Post",
-          },
-          message: "liked your photo.",
-          time: "2m",
-          is_read: false,
-        },
-        {
-          id: "2",
-          type: "follow",
-          user: {
-            username: "jane_smith",
-            avatar_url: "/placeholder.svg?height=40&width=40&text=JS",
-            is_verified: true,
-          },
-          message: "started following you.",
-          time: "5m",
-          is_read: false,
-        },
-        {
-          id: "3",
-          type: "comment",
-          user: {
-            username: "mike_wilson",
-            avatar_url: "/placeholder.svg?height=40&width=40&text=MW",
-            is_verified: false,
-          },
-          post: {
-            id: "post-2",
-            image_url: "/placeholder.svg?height=100&width=100&text=Post2",
-          },
-          message: 'commented: "Amazing shot! 📸"',
-          time: "1h",
-          is_read: true,
-        },
-        {
-          id: "4",
-          type: "like",
-          user: {
-            username: "sarah_jones",
-            avatar_url: "/placeholder.svg?height=40&width=40&text=SJ",
-            is_verified: false,
-          },
-          post: {
-            id: "post-3",
-            image_url: "/placeholder.svg?height=100&width=100&text=Post3",
-          },
-          message: "and 12 others liked your photo.",
-          time: "3h",
-          is_read: true,
-        },
-      ]
+    if (!user) return
 
-      setNotifications(mockNotifications)
+    try {
+      // Get current user from database
+      const currentUser = await userApi.getCurrentUser(user.id)
+      if (!currentUser) return
+
+      // Fetch real notifications
+      const { data, error } = await supabase
+        .from("notifications")
+        .select(`
+          *,
+          from_user:users!notifications_from_user_id_fkey(*),
+          post:posts(*)
+        `)
+        .eq("user_id", currentUser.id)
+        .order("created_at", { ascending: false })
+
+      if (error) throw error
+
+      setNotifications(data || [])
     } catch (error) {
       console.error("Error fetching notifications:", error)
+      setNotifications([])
     } finally {
       setLoading(false)
     }
+  }
+
+  const formatTime = (dateString: string) => {
+    const date = new Date(dateString)
+    const now = new Date()
+    const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60))
+
+    if (diffInMinutes < 1) return "now"
+    if (diffInMinutes < 60) return `${diffInMinutes}m`
+    if (diffInMinutes < 1440) return `${Math.floor(diffInMinutes / 60)}h`
+    return `${Math.floor(diffInMinutes / 1440)}d`
   }
 
   const getNotificationIcon = (type: string) => {
@@ -163,8 +134,8 @@ export default function NotificationsPage() {
               >
                 <div className="relative">
                   <Avatar className="h-12 w-12">
-                    <AvatarImage src={notification.user.avatar_url || "/placeholder.svg"} />
-                    <AvatarFallback>{notification.user.username[0].toUpperCase()}</AvatarFallback>
+                    <AvatarImage src={notification.from_user.avatar_url || "/placeholder.svg"} />
+                    <AvatarFallback>{notification.from_user.username[0].toUpperCase()}</AvatarFallback>
                   </Avatar>
                   <div className="absolute -bottom-1 -right-1 bg-white rounded-full p-1">
                     {getNotificationIcon(notification.type)}
@@ -174,18 +145,18 @@ export default function NotificationsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center space-x-1 mb-1">
                     <Link
-                      href={`/profile/${notification.user.username}`}
+                      href={`/profile/${notification.from_user.username}`}
                       className="font-semibold text-sm hover:underline"
                     >
-                      {notification.user.username}
+                      {notification.from_user.username}
                     </Link>
-                    {notification.user.is_verified && (
+                    {notification.from_user.is_verified && (
                       <div className="w-3 h-3 bg-blue-500 rounded-full flex items-center justify-center">
                         <span className="text-white text-xs">✓</span>
                       </div>
                     )}
                     <span className="text-sm text-gray-600">{notification.message}</span>
-                    <span className="text-gray-400 text-xs ml-auto">{notification.time}</span>
+                    <span className="text-gray-400 text-xs ml-auto">{formatTime(notification.created_at)}</span>
                   </div>
                 </div>
 

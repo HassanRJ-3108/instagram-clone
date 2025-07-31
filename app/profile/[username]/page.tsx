@@ -1,130 +1,136 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useParams } from "next/navigation"
 import { useUser } from "@clerk/nextjs"
-import { Settings, Grid, Bookmark, UserPlus } from "lucide-react"
+import { ArrowLeft, MoreHorizontal, Grid, Bookmark } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { MobileNav } from "@/components/mobile-nav"
+import { userApi } from "@/lib/api"
 import type { User, Post } from "@/lib/types"
 import Image from "next/image"
 import Link from "next/link"
-import { userApi } from "@/lib/api/user-api"
 import { supabase } from "@/lib/supabase"
 
-export default function ProfilePage() {
+export default function UserProfilePage() {
+  const params = useParams()
   const { user: clerkUser } = useUser()
+  const username = params.username as string
+
   const [userProfile, setUserProfile] = useState<User | null>(null)
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [posts, setPosts] = useState<Post[]>([])
   const [loading, setLoading] = useState(true)
+  const [isFollowing, setIsFollowing] = useState(false)
 
   useEffect(() => {
-    if (clerkUser) {
-      fetchUserProfile()
+    if (clerkUser && username) {
+      fetchUserData()
     }
-  }, [clerkUser])
+  }, [clerkUser, username])
 
-  useEffect(() => {
-    if (userProfile) {
-      fetchUserPosts()
-    }
-  }, [userProfile])
-
-  const fetchUserProfile = async () => {
+  const fetchUserData = async () => {
     if (!clerkUser) return
 
     try {
-      // Get user from database
-      const user = await userApi.getCurrentUser(clerkUser.id)
-      if (user) {
-        setUserProfile(user)
-      } else {
-        // Create user if doesn't exist
-        const newUser: Partial<User> = {
-          clerk_id: clerkUser.id,
-          username: clerkUser.username || `user_${clerkUser.id.slice(-8)}`,
-          email: clerkUser.emailAddresses[0]?.emailAddress || "",
-          full_name: clerkUser.fullName || "",
-          avatar_url: clerkUser.imageUrl,
-          bio: "",
-          is_verified: false,
-          is_private: false,
-          followers_count: 0,
-          following_count: 0,
-          posts_count: 0,
-        }
+      // Get current user and target user
+      const [current, users] = await Promise.all([userApi.getCurrentUser(clerkUser.id), userApi.searchUsers(username)])
 
-        // This should be handled by webhook, but as fallback
-        const { data } = await supabase.from("users").insert(newUser).select().single()
-        if (data) setUserProfile(data)
+      const targetUser = users.find((u) => u.username === username)
+
+      if (!targetUser) {
+        // User not found
+        setLoading(false)
+        return
       }
-    } catch (error) {
-      console.error("Error fetching user profile:", error)
-    }
-  }
 
-  const fetchUserPosts = async () => {
-    if (!userProfile) return
+      setCurrentUser(current)
+      setUserProfile(targetUser)
 
-    try {
-      const { data, error } = await supabase
+      // Check if following
+      if (current) {
+        const { data } = await supabase
+          .from("follows")
+          .select("id")
+          .eq("follower_id", current.id)
+          .eq("following_id", targetUser.id)
+          .single()
+
+        setIsFollowing(!!data)
+      }
+
+      // Fetch user posts
+      const { data: postsData } = await supabase
         .from("posts")
         .select("*")
-        .eq("user_id", userProfile.id)
+        .eq("user_id", targetUser.id)
         .order("created_at", { ascending: false })
 
-      if (error) throw error
-      setPosts(data || [])
+      setPosts(postsData || [])
     } catch (error) {
-      console.error("Error fetching user posts:", error)
+      console.error("Error fetching user data:", error)
     } finally {
       setLoading(false)
     }
   }
 
-  if (loading || !userProfile) {
+  const handleFollow = async () => {
+    if (!currentUser || !userProfile) return
+
+    if (isFollowing) {
+      await userApi.unfollowUser(currentUser.id, userProfile.id)
+      setIsFollowing(false)
+      setUserProfile((prev) => (prev ? { ...prev, followers_count: prev.followers_count - 1 } : null))
+    } else {
+      await userApi.followUser(currentUser.id, userProfile.id)
+      setIsFollowing(true)
+      setUserProfile((prev) => (prev ? { ...prev, followers_count: prev.followers_count + 1 } : null))
+    }
+  }
+
+  if (loading) {
     return (
-      <div className="min-h-screen bg-white">
-        <div className="animate-pulse p-4">
-          <div className="flex items-center space-x-4 mb-6">
-            <div className="h-20 w-20 bg-gray-200 rounded-full"></div>
-            <div className="flex-1">
-              <div className="h-4 bg-gray-200 rounded mb-2"></div>
-              <div className="h-3 bg-gray-200 rounded w-2/3"></div>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-1">
-            {[...Array(9)].map((_, i) => (
-              <div key={i} className="aspect-square bg-gray-200"></div>
-            ))}
-          </div>
+      <div className="max-w-2xl mx-auto min-h-screen bg-white flex items-center justify-center">
+        <div className="text-gray-500">Loading profile...</div>
+      </div>
+    )
+  }
+
+  if (!userProfile) {
+    return (
+      <div className="max-w-2xl mx-auto min-h-screen bg-white flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold mb-2">User not found</h1>
+          <p className="text-gray-500 mb-4">The user @{username} doesn't exist</p>
+          <Link href="/search">
+            <Button>Find other users</Button>
+          </Link>
         </div>
-        <MobileNav />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-white pb-12 md:pb-0">
+    <div className="max-w-2xl mx-auto min-h-screen bg-white">
       {/* Header */}
       <header className="sticky top-0 bg-white border-b border-gray-200 z-40">
         <div className="flex items-center justify-between px-4 py-3">
-          <h1 className="text-xl font-semibold">{userProfile.username}</h1>
           <div className="flex items-center space-x-4">
-            <Button variant="ghost" size="icon">
-              <UserPlus className="h-6 w-6" />
-            </Button>
-            <Link href="/settings">
+            <Link href="/search">
               <Button variant="ghost" size="icon">
-                <Settings className="h-6 w-6" />
+                <ArrowLeft className="h-6 w-6" />
               </Button>
             </Link>
+            <h1 className="text-xl font-semibold">{userProfile.username}</h1>
           </div>
+          <Button variant="ghost" size="icon">
+            <MoreHorizontal className="h-6 w-6" />
+          </Button>
         </div>
       </header>
 
-      <main className="max-w-md mx-auto">
+      <main>
         {/* Profile Info */}
         <div className="p-4">
           <div className="flex items-center space-x-4 mb-4">
@@ -132,7 +138,7 @@ export default function ProfilePage() {
               <AvatarImage
                 src={
                   userProfile.avatar_url ||
-                  `/placeholder.svg?height=80&width=80&text=${userProfile.username[0].toUpperCase() || "/placeholder.svg"}`
+                  `/placeholder.svg?height=80&width=80&text=${userProfile.username[0].toUpperCase()}`
                 }
               />
               <AvatarFallback className="text-2xl">{userProfile.username[0].toUpperCase()}</AvatarFallback>
@@ -141,7 +147,7 @@ export default function ProfilePage() {
             <div className="flex-1">
               <div className="flex items-center space-x-6 mb-2">
                 <div className="text-center">
-                  <div className="font-semibold text-lg">{userProfile.posts_count}</div>
+                  <div className="font-semibold text-lg">{posts.length}</div>
                   <div className="text-gray-500 text-sm">posts</div>
                 </div>
                 <div className="text-center">
@@ -171,12 +177,30 @@ export default function ProfilePage() {
 
           {/* Action Buttons */}
           <div className="flex space-x-2 mb-6">
-            <Button variant="outline" className="flex-1 bg-transparent">
-              Edit profile
-            </Button>
-            <Button variant="outline" className="flex-1 bg-transparent">
-              Share profile
-            </Button>
+            {currentUser?.id === userProfile.id ? (
+              <>
+                <Button variant="outline" className="flex-1 bg-transparent">
+                  Edit profile
+                </Button>
+                <Button variant="outline" className="flex-1 bg-transparent">
+                  Share profile
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  onClick={handleFollow}
+                  className={`flex-1 ${isFollowing ? "bg-gray-200 text-black hover:bg-gray-300" : "bg-blue-500 text-white hover:bg-blue-600"}`}
+                >
+                  {isFollowing ? "Following" : "Follow"}
+                </Button>
+                <Link href={`/messages/${userProfile.username}`} className="flex-1">
+                  <Button variant="outline" className="w-full bg-transparent">
+                    Message
+                  </Button>
+                </Link>
+              </>
+            )}
           </div>
         </div>
 
@@ -201,9 +225,11 @@ export default function ProfilePage() {
             {posts.length === 0 ? (
               <div className="text-center py-12">
                 <div className="text-gray-500 mb-4">No posts yet</div>
-                <Link href="/create" className="text-blue-500 font-semibold">
-                  Share your first photo
-                </Link>
+                {currentUser?.id === userProfile.id && (
+                  <Link href="/create" className="text-blue-500 font-semibold">
+                    Share your first photo
+                  </Link>
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-3 gap-1">
@@ -216,16 +242,6 @@ export default function ProfilePage() {
                       className="object-cover"
                       sizes="(max-width: 768px) 33vw, 25vw"
                     />
-                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all duration-200 flex items-center justify-center">
-                      <div className="text-white opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center space-x-4">
-                        <div className="flex items-center space-x-1">
-                          <span className="text-sm font-semibold">{post.likes_count}</span>
-                        </div>
-                        <div className="flex items-center space-x-1">
-                          <span className="text-sm font-semibold">{post.comments_count}</span>
-                        </div>
-                      </div>
-                    </div>
                   </Link>
                 ))}
               </div>
@@ -240,8 +256,6 @@ export default function ProfilePage() {
           </TabsContent>
         </Tabs>
       </main>
-
-      <MobileNav />
     </div>
   )
 }

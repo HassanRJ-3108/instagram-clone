@@ -1,7 +1,5 @@
 "use client"
 
-import { cn } from "@/lib/utils"
-
 import type React from "react"
 
 import { useEffect, useState } from "react"
@@ -40,11 +38,14 @@ export function ResponsiveLayout({ children }: ResponsiveLayoutProps) {
   }, [user?.id])
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="flex min-h-screen bg-white">
+      {/* Desktop Sidebar - Fixed position */}
       {!isMobile && <DesktopSidebar />}
 
-      <main className={cn("min-h-screen", !isMobile ? "lg:ml-64" : "pb-12")}>{children}</main>
+      {/* Main Content - Proper margin for desktop */}
+      <main className={`flex-1 min-h-screen ${!isMobile ? "" : "pb-12"}`}>{children}</main>
 
+      {/* Mobile Navigation */}
       {isMobile && <MobileNav />}
     </div>
   )

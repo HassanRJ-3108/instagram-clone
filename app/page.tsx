@@ -21,24 +21,25 @@ export default function HomePage() {
 
   useEffect(() => {
     if (clerkUser) {
-      initializeUser()
       fetchFeedData()
     }
   }, [clerkUser])
 
-  const initializeUser = async () => {
+  const fetchFeedData = async (pageNum = 0) => {
     if (!clerkUser) return
 
-    const user = await userApi.getCurrentUser(clerkUser.id)
-    setCurrentUser(user)
-  }
-
-  const fetchFeedData = async (pageNum = 0) => {
-    if (!currentUser) return
-
     try {
+      // Get current user first
+      const user = await userApi.getCurrentUser(clerkUser.id)
+      if (!user) {
+        console.log("User not found in database")
+        return
+      }
+
+      setCurrentUser(user)
+
       const [postsData, storiesData] = await Promise.all([
-        postsApi.getFeedPosts(currentUser.id, pageNum),
+        postsApi.getFeedPosts(user.id, pageNum),
         pageNum === 0 ? storiesApi.getActiveStories() : [],
       ])
 
@@ -159,7 +160,8 @@ export default function HomePage() {
       <main>
         {posts.length === 0 ? (
           <div className="text-center py-12">
-            <div className="text-gray-500 mb-4">No posts yet</div>
+            <div className="text-gray-500 mb-4">No posts in your feed</div>
+            <div className="text-sm text-gray-400 mb-4">Follow people to see their posts here</div>
             <Link href="/search" className="text-blue-500 font-semibold">
               Find people to follow
             </Link>
